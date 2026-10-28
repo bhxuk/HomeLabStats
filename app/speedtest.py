@@ -4,16 +4,26 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import platform
+import shutil
 import ssl
+import subprocess
+import tarfile
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 from .config import DATA_DIR, VERSION
 from .store import Store
 
 CF_HOST = "speed.cloudflare.com"
-COLS = "id, ts, engine, trigger, download, upload, ping, jitter, server, isp, ip, error"
+COLS = "id, ts, engine, trigger, download, upload, ping, jitter, server, isp, ip, error, url"
+OOKLA_VERSION = "1.2.0"
+OOKLA_ARCH = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64",
+              "armv7l": "armhf", "armv6l": "armel", "i686": "i386", "i386": "i386"}
+CF_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) HomeLabStats", "Referer": "https://speed.cloudflare.com/",
+              "Origin": "https://speed.cloudflare.com", "Accept": "*/*"}
 
 
 class SpeedTester:
@@ -27,6 +37,10 @@ class SpeedTester:
         self.engine: str | None = None
         self.error: str | None = None
         self.live: dict = {}
+        try:
+            self.store.x("ALTER TABLE speedtests ADD COLUMN url TEXT")
+        except Exception:
+            pass  # column already there
         self._migrate_json()
 
     def _migrate_json(self) -> None:
@@ -67,7 +81,9 @@ class SpeedTester:
 
     def status(self) -> dict:
         live = {}
-        if self.live.get("start") and self.phase in ("download", "upload"):
+        if self.live.get("direct") is not None and self.phase in ("download", "upload"):
+            live = {"mbps": round(self.live["direct"], 1)}
+        elif self.live.get("start") and self.phase in ("download", "upload"):
             elapsed = max(time.perf_counter() - self.live["start"], 0.001)
             live = {"mbps": round(self.live["bytes"][0] * 8 / elapsed / 1e6, 1), "elapsed": round(elapsed, 1)}
         interval = float(self.settings.get("speedtest_interval_hours") or 0)
@@ -109,9 +125,9 @@ class SpeedTester:
         try:
             res = self._ookla() if engine == "ookla" else self._cloudflare()
             self.store.x(
-                "INSERT INTO speedtests(ts, engine, trigger, download, upload, ping, jitter, server, isp, ip) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO speedtests(ts, engine, trigger, download, upload, ping, jitter, server, isp, ip, url) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (time.time(), engine, trigger, res["download"], res["upload"], res["ping"], res.get("jitter"),
-                 res.get("server"), res.get("isp"), res.get("ip")))
+                 res.get("server"), res.get("isp"), res.get("ip"), res.get("url")))
             floor = float(self.settings.get("speedtest_alert_below_mbps") or 0)
             msg = f"Down {res['download']:.0f} Mbps, up {res['upload']:.0f} Mbps, ping {res['ping']:.0f} ms ({res.get('server')})"
             if floor and res["download"] < floor:
@@ -135,7 +151,7 @@ class SpeedTester:
         return http.client.HTTPSConnection(CF_HOST, timeout=15, context=ssl.create_default_context())
 
     def _cloudflare(self) -> dict:
-        headers = {"User-Agent": f"homelabstats/{VERSION}"}
+        headers = dict(CF_HEADERS)
         self.phase = "latency"
         conn = self._conn()
         conn.request("GET", "/__down?bytes=0", headers=headers)
@@ -178,10 +194,13 @@ class SpeedTester:
             try:
                 while time.perf_counter() < stop:
                     if direction == "down":
-                        conn.request("GET", "/__down?bytes=100000000", headers=headers)
+                        conn.request("GET", "/__down?bytes=25000000", headers=headers)
                         r = conn.getresponse()
+                        if r.status != 200:
+                            r.read()
+                            raise RuntimeError(f"Cloudflare answered HTTP {r.status} to the download request")
                         while time.perf_counter() < stop:
-                            chunk = r.read(65536)
+                            chunk = r.read(262144)
                             if not chunk:
                                 break
                             with lock:
@@ -193,6 +212,8 @@ class SpeedTester:
                         conn.request("POST", "/__up", body=payload, headers=h)
                         r = conn.getresponse()
                         r.read()
+                        if r.status != 200:
+                            raise RuntimeError(f"Cloudflare answered HTTP {r.status} to the upload request")
                         with lock:
                             counter[0] += len(payload)
             except Exception as exc:
@@ -206,25 +227,83 @@ class SpeedTester:
         for t in ts:
             t.join(timeout=duration + 20)
         elapsed = time.perf_counter() - start
-        if counter[0] == 0:
-            raise RuntimeError(f"{direction}load failed: {errors[0] if errors else 'no data transferred'}")
-        return counter[0] * 8 / elapsed / 1e6
+        mbps = counter[0] * 8 / elapsed / 1e6
+        # A refused or cut-off transfer must not be logged as a (very slow) result.
+        if counter[0] < 2_000_000 or (errors and len(errors) >= threads):
+            raise RuntimeError(f"{direction}load test failed: {errors[0] if errors else 'almost no data transferred'}")
+        return mbps
+
+    # Ookla (official Speedtest CLI) ------------------------------------------
+    def _ookla_binary(self) -> Path:
+        """Download Ookla's official CLI into the data folder on first use."""
+        bin_dir = Path(DATA_DIR) / "bin"
+        target = bin_dir / f"speedtest-{OOKLA_VERSION}"
+        if target.exists():
+            return target
+        on_path = shutil.which("speedtest")
+        if on_path and "Ookla" in subprocess.run([on_path, "--version"], capture_output=True, text=True).stdout:
+            return Path(on_path)
+        arch = OOKLA_ARCH.get(platform.machine().lower())
+        if not arch:
+            raise RuntimeError(f"Ookla's CLI has no build for {platform.machine()}. Use the Cloudflare engine.")
+        self.phase = "downloading Ookla CLI"
+        url = f"https://install.speedtest.net/app/cli/ookla-speedtest-{OOKLA_VERSION}-linux-{arch}.tgz"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        tgz = bin_dir / "ookla.tgz"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": f"homelabstats/{VERSION}"}), timeout=60) as r:
+            tgz.write_bytes(r.read())
+        with tarfile.open(tgz) as tf:
+            member = tf.getmember("speedtest")
+            with tf.extractfile(member) as src:
+                target.write_bytes(src.read())
+        tgz.unlink(missing_ok=True)
+        target.chmod(0o755)
+        return target
 
     def _ookla(self) -> dict:
-        import speedtest  # speedtest-cli
+        binary = self._ookla_binary()
         self.phase = "finding server"
-        s = speedtest.Speedtest(secure=True)
-        s.get_best_server()
-        self.phase = "download"
-        s.download()
-        self.phase = "upload"
-        s.upload(pre_allocate=False)
-        r = s.results.dict()
-        srv = r.get("server", {})
-        return {"download": round(r["download"] / 1e6, 2), "upload": round(r["upload"] / 1e6, 2),
-                "ping": round(r["ping"], 1), "jitter": None,
-                "server": f"{srv.get('sponsor', '?')} ({srv.get('name', '?')})",
-                "isp": r.get("client", {}).get("isp"), "ip": r.get("client", {}).get("ip")}
+        env = dict(os.environ, HOME=str(DATA_DIR))
+        proc = subprocess.Popen([str(binary), "--accept-license", "--accept-gdpr", "--format=jsonl", "--progress=yes"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=str(DATA_DIR))
+        result, last_error = None, None
+        deadline = time.time() + 180
+        try:
+            for line in proc.stdout:
+                if time.time() > deadline:
+                    proc.kill()
+                    raise RuntimeError("Ookla test took longer than 3 minutes")
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                t = ev.get("type")
+                if t == "ping":
+                    self.phase = "latency"
+                elif t in ("download", "upload"):
+                    self.phase = t
+                    bw = (ev.get(t) or {}).get("bandwidth")
+                    if bw:
+                        self.live = {"direct": bw / 125000}
+                elif t == "result":
+                    result = ev
+                elif t == "log" and ev.get("level") == "error":
+                    last_error = ev.get("message")
+            proc.wait(timeout=30)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        if not result:
+            err = last_error or (proc.stderr.read() if proc.stderr else "") or f"exit code {proc.returncode}"
+            raise RuntimeError(f"Ookla: {str(err).strip()[:250]}")
+        srv = result.get("server") or {}
+        return {"download": round(result["download"]["bandwidth"] / 125000, 2),
+                "upload": round(result["upload"]["bandwidth"] / 125000, 2),
+                "ping": round((result.get("ping") or {}).get("latency") or 0, 1),
+                "jitter": round((result.get("ping") or {}).get("jitter") or 0, 1),
+                "server": f"{srv.get('name', '?')} ({srv.get('location', '?')})",
+                "isp": result.get("isp"), "ip": (result.get("interface") or {}).get("externalIp"),
+                "url": (result.get("result") or {}).get("url")}
 
     def scheduler(self) -> None:
         time.sleep(20)

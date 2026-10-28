@@ -3,6 +3,16 @@
 All notable changes to HomeLabStats are listed here. The in-app **Updates** tab reads this file,
 so every release needs an entry. Versions follow [semantic versioning](https://semver.org).
 
+## [1.2.1] - 2026-10-28
+
+### Fixed
+- **Speed tests reading far too low.** The Ookla engine now uses Ookla's official Speedtest CLI (the same engine as speedtest.net and Speedtest Tracker) instead of the old unofficial `speedtest-cli`, which badly under-reports fast connections. It downloads itself into the data folder the first time you run an Ookla test
+- The Cloudflare test now checks every response, so a refused or interrupted transfer is logged as a failed test instead of a near-zero result that drags your averages down
+
+### Changed
+- Ookla is now the default engine, and the engine you pick next to Run test is remembered
+- Ookla results link to their speedtest.net result page
+
 ## [1.2.0] - 2026-10-28
 
 ### Added

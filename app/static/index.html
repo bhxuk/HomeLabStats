@@ -188,7 +188,7 @@
       </div>
       <div class="panel mb">
         <h3>Speed test <span class="right row">
-          <select class="select" id="stEngine" style="padding:4px 8px;font-size:12px"><option value="cloudflare">Cloudflare</option><option value="ookla">Ookla</option></select>
+          <select class="select" id="stEngine" style="padding:4px 8px;font-size:12px"><option value="ookla">Ookla (speedtest.net)</option><option value="cloudflare">Cloudflare</option></select>
           <button class="btn primary sm" id="stRun">Run test</button></span></h3>
         <div class="progress" id="stProg" hidden><i></i></div>
         <div class="grid g2b">
@@ -240,8 +240,8 @@
           <h3 class="mt">Speed tests</h3>
           <div class="setrow"><div class="txt"><b>Automatic speed test</b><span>Each Cloudflare test uses roughly 1 GB on a gigabit line.</span></div>
             <select class="select" data-set="speedtest_interval_hours"><option value="0">Off</option><option value="1">Every hour</option><option value="3">Every 3 hours</option><option value="6">Every 6 hours</option><option value="12">Every 12 hours</option><option value="24">Daily</option></select></div>
-          <div class="setrow"><div class="txt"><b>Engine</b><span>Cloudflare is quick and reliable. Ookla matches speedtest.net.</span></div>
-            <select class="select" data-set="speedtest_engine"><option value="cloudflare">Cloudflare</option><option value="ookla">Ookla</option></select></div>
+          <div class="setrow"><div class="txt"><b>Engine</b><span>Ookla uses the official Speedtest CLI (downloaded on first use) and picks the nearest server. Cloudflare needs no download.</span></div>
+            <select class="select" data-set="speedtest_engine"><option value="ookla">Ookla (speedtest.net)</option><option value="cloudflare">Cloudflare</option></select></div>
           <div class="setrow"><div class="txt"><b>Alert when download is below</b><span>Mbps. 0 turns the alert off.</span></div>
             <input class="input" type="number" min="0" step="10" data-set="speedtest_alert_below_mbps" style="width:110px"></div>
           <h3 class="mt">Data</h3>

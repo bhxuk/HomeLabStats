@@ -9,7 +9,7 @@
   const walk = (v, step, a, b) => clamp(v + rnd(-step, step), a, b);
   const seeded = s => () => (s = (s * 16807) % 2147483647) / 2147483647;
   const boot = now() - (18 * 86400 + 7 * 3600 + 23 * 60);
-  const CORES = 12, MEM = 31.2 * GB, VERSION = "1.2.0";
+  const CORES = 12, MEM = 31.2 * GB, VERSION = "1.2.1";
 
   const host = {
     hostname: "homelab", os: "Ubuntu 24.04.3 LTS", kernel: "6.8.0-87-generic", arch: "x86_64",

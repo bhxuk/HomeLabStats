@@ -17,7 +17,7 @@ CHANNEL_TYPES = ("discord", "telegram", "ntfy", "slack", "webhook")
 DEFAULTS: dict = {
     "container_actions": True,
     "speedtest_interval_hours": 0.0,
-    "speedtest_engine": "cloudflare",
+    "speedtest_engine": "ookla",
     "speedtest_alert_below_mbps": 0.0,
     "retention_days": 90,
     "notify_channels": [],

@@ -71,7 +71,7 @@ function renderSpeed(s) {
     clearInterval(N.stTimer); N.stTimer = null;
     if (last) {
       set("stDown", last.download.toFixed(last.download < 100 ? 1 : 0)); set("stUp", last.upload.toFixed(last.upload < 100 ? 1 : 0)); set("stPing", last.ping.toFixed(1));
-      $("#stInfo").innerHTML = `${esc(last.server)}${last.isp ? " · " + esc(last.isp) : ""} · ${ago(last.ts)}${last.jitter != null ? ` · jitter ${last.jitter} ms` : ""}`;
+      $("#stInfo").innerHTML = `${last.url ? `<a href="${esc(last.url)}" target="_blank" rel="noopener">${esc(last.server)} ↗</a>` : esc(last.server)}${last.isp ? " · " + esc(last.isp) : ""} · ${esc(last.engine === "ookla" ? "Ookla" : "Cloudflare")} · ${ago(last.ts)}${last.jitter != null ? ` · jitter ${last.jitter} ms` : ""}`;
     }
     if (s.error) $("#stInfo").innerHTML = `<span class="c-crit">Last test failed: ${esc(s.error)}</span>`;
   }
@@ -86,7 +86,7 @@ function renderSpeed(s) {
   $("#stTbl tbody").innerHTML = s.history.map(x => `<tr><td class="muted">${esc(new Date(x.ts * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" }))}</td>
     <td><span class="chip ${x.trigger === "scheduled" ? "violet" : ""}">${esc(x.trigger || "manual")}</span></td>
     ${x.error ? `<td colspan="4" class="c-crit" style="font-size:12px">${esc(x.error)}</td>` : `<td class="r mono" style="color:var(--cyan)">${x.download.toFixed(1)}</td><td class="r mono" style="color:var(--violet)">${x.upload.toFixed(1)}</td><td class="r mono">${x.ping}</td><td class="r mono muted">${x.jitter ?? "-"}</td>`}
-    <td class="muted trunc" style="max-width:220px">${esc(x.server || "")}</td><td class="r"><button class="btn sm" data-del="${x.id}" title="Delete">✕</button></td></tr>`).join("") ||
+    <td class="muted trunc" style="max-width:240px" title="${esc(x.server || "")}">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.server || "result")} ↗</a>` : esc(x.server || "")}</td><td class="r"><button class="btn sm" data-del="${x.id}" title="Delete">✕</button></td></tr>`).join("") ||
     `<tr><td colspan="8" class="empty">No tests in this period. Hit Run test, or turn on automatic tests in Settings.</td></tr>`;
 }
 $("#stRun").onclick = async () => { try { renderSpeed({ ...(await api(`api/speedtest?engine=${$("#stEngine").value}`, { method: "POST" })), history: [], stats: { "24h": {}, "7d": {}, "30d": {}, all: {} } }); loadSpeed(); } catch (e) { toast(e.message); } };
@@ -95,6 +95,7 @@ $("#stTbl").addEventListener("click", async e => {
   if (!confirm("Delete this speed test from the log?")) return;
   try { await api(`api/speedtest/${b.dataset.del}`, { method: "DELETE" }); loadSpeed(); } catch (err) { toast(err.message); }
 });
+$("#stEngine").addEventListener("change", e => api("api/settings", { method: "PUT", json: { speedtest_engine: e.target.value } }).then(() => toast(`Speed tests will use ${e.target.selectedOptions[0].text}`)).catch(err => toast(err.message)));
 $("#stCsv").addEventListener("click", e => { if (DEMO) { e.preventDefault(); toast("Downloads are disabled in the demo"); } });
 seg("#stRange", [["7", "7d"], ["30", "30d"], ["90", "90d"], ["365", "1y"], ["36500", "All"]], N.stRange, v => { N.stRange = v; loadSpeed(); });
 
