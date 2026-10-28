@@ -21,6 +21,7 @@ DEFAULTS: dict = {
     "speedtest_alert_below_mbps": 0.0,
     "retention_days": 90,
     "notify_channels": [],
+    "container_links": {},
     "notify_on": {
         "monitor_down": True,
         "monitor_up": True,
@@ -95,6 +96,9 @@ class AppSettings:
                 for k, v in patch["notify_on"].items():
                     if k in data["notify_on"]:
                         data["notify_on"][k] = bool(v)
+            if isinstance(patch.get("container_links"), dict):
+                data["container_links"] = {str(k)[:120]: str(v).strip()[:500] for k, v in patch["container_links"].items()
+                                           if str(v or "").strip()}
             if isinstance(patch.get("notify_channels"), list):
                 data["notify_channels"] = [self._clean_channel(c) for c in patch["notify_channels"] if isinstance(c, dict)]
             self._data = data

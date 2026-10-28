@@ -9,7 +9,7 @@
   const walk = (v, step, a, b) => clamp(v + rnd(-step, step), a, b);
   const seeded = s => () => (s = (s * 16807) % 2147483647) / 2147483647;
   const boot = now() - (18 * 86400 + 7 * 3600 + 23 * 60);
-  const CORES = 12, MEM = 31.2 * GB, VERSION = "1.1.0";
+  const CORES = 12, MEM = 31.2 * GB, VERSION = "1.2.0";
 
   const host = {
     hostname: "homelab", os: "Ubuntu 24.04.3 LTS", kernel: "6.8.0-87-generic", arch: "x86_64",
@@ -64,7 +64,13 @@
     mk("netdata", "netdata/netdata:latest", null, 0, 0, { state: "exited", exit: 0, finished: 2 * 86400 }),
     mk("bazarr", "lscr.io/linuxserver/bazarr:latest", "media", 0, 0, { state: "exited", exit: 137, finished: 3 * 3600 }),
   ];
-  containers.forEach(c => { c.full_id = c.id.padEnd(64, "0"); c.net_rx = rnd(0.2, 40) * GB; c.net_tx = rnd(0.05, 9) * GB; });
+  const HOST_PORTS = { plex: [32400], homeassistant: [8123], homelabstats: [8090] };
+  containers.forEach(c => {
+    c.full_id = c.id.padEnd(64, "0"); c.net_rx = rnd(0.2, 40) * GB; c.net_tx = rnd(0.05, 9) * GB;
+    c.port_list = c.ports.map(p => { const [h, rest] = p.split(":"); const [cp, proto] = rest.split("/"); return { host: +h, container: +cp, proto, ip: "0.0.0.0" }; });
+    c.host_ports = c.state === "running" ? (HOST_PORTS[c.name] || []) : []; c.url_label = null;
+  });
+  const links = { pihole: "http://{host}:8053/admin" };
   const findC = id => containers.find(c => c.id === id || c.name === id);
 
   /* ---------- processes ---------- */
@@ -349,7 +355,7 @@
       return { total: procs.length, matched: rows.length, processes: rows.slice(0, +(q.get("limit") || 100)) };
     }
     if ((m = p.match(/^\/api\/processes\/(\d+)\/(terminate|kill)$/))) { logEvent("process", "warn", `Process ${m[1]} ended`, "Demo only: nothing was really stopped."); return { ok: true }; }
-    if (p === "/api/docker") return { available: true, error: null, containers: dockerRows(), info: { version: "28.5.1", images: 31, driver: "overlay2", cpus: CORES, mem: MEM }, time: now() - 1 };
+    if (p === "/api/docker") return { available: true, error: null, containers: dockerRows(), info: { version: "28.5.1", images: 31, driver: "overlay2", cpus: CORES, mem: MEM }, time: now() - 1, links };
     if (p === "/api/docker/df") return { images: { count: 31, size: 24.6 * GB, unused_count: 9, unused_size: 7.8 * GB, dangling_count: 6, dangling_size: 2.1 * GB }, containers: { count: 16, size: 410 * MB, stopped: 3 },
       volumes: { count: 12, size: 18.3 * GB, unused_count: 2 }, build_cache: { count: 48, size: 3.4 * GB, reclaimable: 3.4 * GB },
       top_images: [["lscr.io/linuxserver/plex:latest", 3.1, true], ["ghcr.io/immich-app/immich-machine-learning:release", 2.9, true], ["netdata/netdata:latest", 1.6, false], ["ghcr.io/home-assistant/home-assistant:stable", 1.9, true], ["ghcr.io/immich-app/immich-server:release", 1.4, true], ["nicolargo/glances:latest", 0.9, false], ["louislam/uptime-kuma:1", 0.6, false], ["amir20/dozzle:latest", 0.05, false]].map(([tag, s, u]) => ({ tag, size: s * GB, in_use: u, created: now() - 9e6 })), time: now() };
@@ -419,7 +425,7 @@
     }
     if (p === "/api/settings" && method === "GET") return { settings, db: { path: "/data/homelabstats.db", size: 48.2 * MB, sys_raw: 17280, sys_5m: 25920, beats: 312400, speedtests: speedHistory.length, events: 1820, oldest: now() - 90 * 86400 }, version: VERSION };
     if (p === "/api/settings" && method === "PUT") {
-      for (const [k, v] of Object.entries(body)) { if (k === "notify_on") Object.assign(settings.notify_on, v); else settings[k] = v; }
+      for (const [k, v] of Object.entries(body)) { if (k === "notify_on") Object.assign(settings.notify_on, v); else if (k === "container_links") { Object.keys(links).forEach(x => delete links[x]); Object.assign(links, v); } else settings[k] = v; }
       settings.notify_channels = settings.notify_channels.map(c => ({ ...c, id: c.id || Math.random().toString(16).slice(2, 10) }));
       return { settings };
     }

@@ -230,7 +230,7 @@ def api_process_signal(pid: int, signal: str, user: str = Depends(auth)) -> dict
 # ---- docker ---------------------------------------------------------------
 @app.get("/api/docker")
 def api_docker() -> dict:
-    return docker_watch.snapshot()
+    return {**docker_watch.snapshot(), "links": settings.get("container_links") or {}}
 
 
 @app.get("/api/docker/df")

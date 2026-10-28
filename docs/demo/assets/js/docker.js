@@ -18,6 +18,42 @@ function stateChip(c) {
 }
 const isProblem = c => c.health === "unhealthy" || c.state === "restarting" || (c.state === "exited" && c.exit_code);
 
+/* ---------- web links ---------- */
+const NON_WEB = new Set([22, 25, 53, 67, 68, 110, 123, 137, 138, 139, 143, 445, 465, 587, 993, 995, 1883, 1900, 3306, 5353, 5432, 6379, 6881, 8883, 27017, 51413]);
+const HTTPS_PORTS = new Set([443, 8443, 9443, 5001, 10443]);
+function portUrl(port, containerPort) {
+  const https = HTTPS_PORTS.has(port) || HTTPS_PORTS.has(containerPort);
+  const host = location.hostname || "localhost";
+  const defaultPort = (https && port === 443) || (!https && port === 80);
+  return `${https ? "https" : "http"}://${host}${defaultPort ? "" : ":" + port}/`;
+}
+function webPorts(c) {
+  const mapped = (c.port_list || []).filter(p => p.proto === "tcp" && !NON_WEB.has(p.host)).map(p => ({ port: p.host, cport: p.container }));
+  const host = (c.host_ports || []).filter(p => !NON_WEB.has(p)).map(p => ({ port: p, cport: p }));
+  return mapped.length ? mapped : host;
+}
+function customUrl(c) {
+  let u = (D.data?.links || {})[c.name] || c.url_label;
+  if (!u) return null;
+  if (!/^https?:\/\//i.test(u)) u = "http://" + u;
+  return u.replace("{host}", location.hostname);
+}
+function webUrl(c) {
+  if (c.state !== "running") return null;
+  const custom = customUrl(c); if (custom) return custom;
+  const w = webPorts(c);
+  if (!w.length) return null;
+  const pref = w.find(p => [80, 443, 8080, 8443, 3000, 32400, 8123, 9443, 8096, 5000].includes(p.port)) || w[0];
+  return portUrl(pref.port, pref.cport) + (pref.port === 32400 ? "web" : "");
+}
+function portChips(c, max = 2) {
+  const list = (c.port_list || []).length ? c.port_list.map(p => ({ label: `${p.host}:${p.container}/${p.proto}`, port: p.host, cport: p.container, tcp: p.proto === "tcp" }))
+    : (c.host_ports || []).map(p => ({ label: `${p} host`, port: p, cport: p, tcp: true }));
+  if (!list.length) return c.network_mode === "host" ? `<span class="chip violet">host</span>` : "";
+  const chip = p => p.tcp && c.state === "running" ? `<a class="chip link" href="${esc(portUrl(p.port, p.cport))}" target="_blank" rel="noopener" title="Open ${esc(portUrl(p.port, p.cport))}">${esc(p.label)} ↗</a>` : `<span class="chip">${esc(p.label)}</span>`;
+  return list.slice(0, max).map(chip).join(" ") + (list.length > max ? ` <span class="dim" title="${esc(list.slice(max).map(p => p.label).join(", "))}">+${list.length - max}</span>` : "");
+}
+
 function actionButtons(c, compact = true) {
   const sm = "btn sm", out = [];
   if (!canManage()) return "";
@@ -63,13 +99,13 @@ function renderDocker() {
     return `<tr data-row="${c.id}" style="cursor:pointer">
       <td><div class="mono" style="font-weight:600">${esc(c.name)}${c.is_self ? `<span class="selfbadge">this app</span>` : ""}</div>${c.project && group !== "project" ? `<div class="dim" style="font-size:11px">${esc(c.project)}</div>` : ""}</td>
       <td>${stateChip(c)}${c.restart_count ? ` <span class="chip amber" title="restart count">↻${c.restart_count}</span>` : ""}</td>
-      <td class="mono muted trunc" style="max-width:190px" title="${esc(c.image)}">${esc(c.image)}</td>
+      <td class="mono muted trunc col-img" style="max-width:190px" title="${esc(c.image)}">${esc(c.image)}</td>
       <td class="r">${s ? `<div class="cellbar"><span class="mono" style="color:${barColor(s.cpu)}">${s.cpu.toFixed(1)}%</span><div class="bar"><i style="width:${Math.min(s.cpu * 4, 100)}%;background:${barColor(s.cpu)}"></i></div></div>` : `<span class="dim">-</span>`}</td>
       <td class="r mono">${s ? `${fmtBytes(s.mem_used)}<div class="dim" style="font-size:11px">${s.mem_limit && s.mem_limit < (d.info.mem || Infinity) ? "of " + fmtBytes(s.mem_limit) : (s.mem_pct.toFixed(1) + "% of host")}</div>` : `<span class="dim">-</span>`}</td>
-      <td class="r mono muted" style="font-size:12px">${s ? `↓ ${fmtBytes(s.net_rx)}<br>↑ ${fmtBytes(s.net_tx)}` : "-"}</td>
-      <td class="r mono muted">${c.state === "running" ? fmtDur(now - c.started) : (c.finished ? ago(c.finished) : "-")}</td>
-      <td class="mono" style="font-size:12px">${c.ports.length ? c.ports.slice(0, 2).map(p => `<span class="chip">${esc(p)}</span>`).join(" ") + (c.ports.length > 2 ? ` <span class="dim" title="${esc(c.ports.slice(2).join(", "))}">+${c.ports.length - 2}</span>` : "") : (c.network_mode === "host" ? `<span class="chip violet">host</span>` : "")}</td>
-      <td class="r"><div class="actions" style="justify-content:flex-end"><button class="btn sm" data-logs="${esc(c.name)}" title="Logs">Logs</button>${actionButtons(c)}</div></td></tr>`;
+      <td class="r mono muted col-net" style="font-size:12px">${s ? `↓ ${fmtBytes(s.net_rx)}<br>↑ ${fmtBytes(s.net_tx)}` : "-"}</td>
+      <td class="r mono muted col-up">${c.state === "running" ? fmtDur(now - c.started) : (c.finished ? ago(c.finished) : "-")}</td>
+      <td class="mono col-ports" style="font-size:12px">${portChips(c)}</td>
+      <td class="r"><div class="actions" style="justify-content:flex-end">${(u => u ? `<a class="btn sm open" href="${esc(u)}" target="_blank" rel="noopener" title="Open ${esc(u)}">Open ↗</a>` : "")(webUrl(c))}<button class="btn sm" data-logs="${esc(c.name)}">Logs</button><button class="btn sm" data-menu="${c.id}" title="More actions" aria-label="More actions">⋯</button></div></td></tr>`;
   };
   if (group === "project") {
     const groups = {};
@@ -104,9 +140,41 @@ $("#dState").addEventListener("change", renderDocker);
 $("#dGroup").addEventListener("change", renderDocker);
 $("#dTbl").addEventListener("click", async e => {
   const lg = e.target.closest("[data-logs]"); if (lg) { e.stopPropagation(); return openLogsFor(lg.dataset.logs); }
+  if (e.target.closest("a")) return;
+  const mb = e.target.closest("[data-menu]"); if (mb) { e.stopPropagation(); return containerMenu(mb); }
   const b = e.target.closest("[data-act]"); if (b) { e.stopPropagation(); b.disabled = true; await containerAction(b.dataset.id, b.dataset.act); b.disabled = false; return; }
   const tr = e.target.closest("[data-row]"); if (tr) openContainer(tr.dataset.row);
 });
+
+function containerMenu(btn) {
+  const c = D.data?.containers.find(x => x.id === btn.dataset.menu); if (!c) return;
+  const act = a => () => containerAction(c.id, a), m = canManage(), items = [{ label: "Details", onClick: () => openContainer(c.id) }];
+  const url = webUrl(c); if (url) items.push({ label: "Open web UI ↗", onClick: () => window.open(url, "_blank", "noopener") });
+  items.push({ label: "Set web address", onClick: () => editLink(c) }, { sep: true });
+  if (c.state === "running") {
+    items.push({ label: "Restart", onClick: act("restart"), disabled: !m });
+    if (!c.is_self) items.push({ label: "Pause", onClick: act("pause"), disabled: !m }, { label: "Stop", danger: true, onClick: act("stop"), disabled: !m });
+  } else if (c.state === "paused") items.push({ label: "Resume", onClick: act("unpause"), disabled: !m });
+  else {
+    items.push({ label: "Start", onClick: act("start"), disabled: !m });
+    if (!c.is_self) items.push({ label: "Remove", danger: true, onClick: act("remove"), disabled: !m });
+  }
+  if (!m) items.push({ sep: true }, { label: "Controls are off in Settings", disabled: true });
+  popMenu(btn, items);
+}
+async function editLink(c) {
+  const cur = (D.data?.links || {})[c.name] || "";
+  const detected = webPorts(c).map(p => portUrl(p.port, p.cport));
+  const r = await dialog(`Web address for ${c.name}`, `<p class="muted" style="margin-top:0;font-size:13px">Used by the Open button. Leave empty to use the detected port${detected.length ? ` (${esc(detected[0])})` : ""}. <span class="mono">{host}</span> is replaced with the address you are browsing from.</p>
+    <div class="field"><label>URL</label><input class="input" id="lkUrl" value="${esc(cur)}" placeholder="${esc(detected[0] || "http://{host}:8080")}"></div>
+    ${detected.length > 1 ? `<div class="hint muted" style="font-size:12px">Detected: ${detected.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a>`).join(", ")}</div>` : ""}`,
+    [{ label: "Cancel", value: null }, { label: "Save", cls: "primary", action: b => ({ v: $("#lkUrl", b).value.trim() }) }]);
+  if (!r) return;
+  const links = { ...(D.data?.links || {}) };
+  if (r.v) links[c.name] = r.v; else delete links[c.name];
+  try { await api("api/settings", { method: "PUT", json: { container_links: links } }); D.data.links = links; toast(r.v ? "Web address saved" : "Using the detected port"); renderDocker(); if (state.drawer?.id === c.id) openContainer(c.id); }
+  catch (e) { toast(e.message); }
+}
 
 /* ---------- details drawer ---------- */
 async function openContainer(id) {
@@ -123,13 +191,17 @@ async function openContainer(id) {
 function refreshDrawerState() {
   const c = D.data?.containers.find(x => x.id === state.drawer.id); if (!c) return;
   $("#drState").innerHTML = stateChip(c);
-  const a = $("#drActions"); if (a) a.innerHTML = `<button class="btn sm" data-logs="${esc(c.name)}">View logs</button>` + actionButtons(c, false);
+  const a = $("#drActions"), u = webUrl(c);
+  if (a) a.innerHTML = (u ? `<a class="btn sm primary" href="${esc(u)}" target="_blank" rel="noopener">Open web UI ↗</a>` : "") + `<button class="btn sm" data-logs="${esc(c.name)}">View logs</button>` + actionButtons(c, false);
 }
 function renderContainerDrawer(c, info, hist) {
   const kv = rows => `<dl class="kvs">${rows.filter(r => r[1] != null && r[1] !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
   const h = info.health || {};
   $("#drBody").innerHTML = `
     <div class="actions" id="drActions"></div>
+    <div class="section-t">Web address</div>
+    <div class="row" style="font-size:13px">${(u => u ? `<a class="mono" href="${esc(u)}" target="_blank" rel="noopener">${esc(u)} ↗</a>` : `<span class="muted">${c.state === "running" ? "No web port detected." : "Container is not running."}</span>`)(webUrl(c))}
+      ${(D.data?.links || {})[c.name] ? `<span class="chip cyan">custom</span>` : ""}<span class="spacer"></span><button class="btn sm" id="drLink">Change</button></div>
     <div class="section-t">Usage <span class="seg" id="drRange" style="float:right;margin-top:-6px"></span></div>
     <div class="chart" id="drChartCpu" style="height:140px"><canvas></canvas><div class="tip"></div></div>
     <div class="chart mt" id="drChartMem" style="height:140px"><canvas></canvas><div class="tip"></div></div>
@@ -141,7 +213,7 @@ function renderContainerDrawer(c, info, hist) {
       ["Network", esc(info.network_mode)], ["Privileged", info.privileged ? "yes" : null],
       ["Memory limit", info.mem_limit ? fmtBytes(info.mem_limit) : "none"], ["CPU limit", info.cpu_limit ? info.cpu_limit + " cores" : "none"],
       ["Compose", info.compose_project ? `${esc(info.compose_project)} / ${esc(info.compose_service)}` : null], ["Compose folder", esc(info.compose_dir)]])}
-    ${info.ports.length ? `<div class="section-t">Ports</div><div class="actions">${info.ports.map(p => `<span class="chip">${esc(p)}</span>`).join("")}</div>` : ""}
+    ${(c.port_list || []).length || (c.host_ports || []).length ? `<div class="section-t">Ports</div><div class="actions">${portChips(c, 99)}</div>` : ""}
     ${info.networks.length ? `<div class="section-t">Networks</div>${kv(info.networks.map(n => [n.name, esc(n.ip || "-")]))}` : ""}
     ${info.mounts.length ? `<div class="section-t">Volumes & mounts</div><div class="tablewrap"><table class="data"><thead><tr><th>Container path</th><th>Source</th><th></th></tr></thead><tbody>${info.mounts.map(m => `<tr><td class="mono" style="font-size:12px">${esc(m.dest)}</td><td class="mono muted trunc" style="font-size:12px;max-width:260px" title="${esc(m.source)}">${esc(m.source)}</td><td>${m.rw ? "" : `<span class="chip">ro</span>`} <span class="chip">${esc(m.type)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}
     ${info.env_keys.length ? `<div class="section-t">Environment variables (${info.env_keys.length})</div><div class="actions">${info.env_keys.map(k => `<span class="chip">${esc(k)}</span>`).join("")}</div><div class="dim mt" style="font-size:11px">Values are hidden.</div>` : ""}
@@ -159,6 +231,7 @@ function drawContainerCharts(hist) {
   chart("drChartMem", [{ name: "Memory", color: C.violet, data: p.map(r => [r.t, r.mem]) }], { ...o, fmt: v => fmtBytes(v) });
 }
 $("#drBody").addEventListener("click", async e => {
+  if (e.target.id === "drLink") { const c = D.data?.containers.find(x => x.id === state.drawer?.id); if (c) editLink(c); return; }
   const lg = e.target.closest("[data-logs]"); if (lg) { closeDrawer(); return openLogsFor(lg.dataset.logs); }
   const b = e.target.closest("[data-act]"); if (b) { b.disabled = true; await containerAction(b.dataset.id, b.dataset.act); b.disabled = false; }
 });

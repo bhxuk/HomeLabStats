@@ -3,6 +3,16 @@
 All notable changes to HomeLabStats are listed here. The in-app **Updates** tab reads this file,
 so every release needs an entry. Versions follow [semantic versioning](https://semver.org).
 
+## [1.2.0] - 2026-10-28
+
+### Added
+- **Open buttons:** every container with a web interface gets an Open button, and every port is a clickable link. Links use the address you are browsing from, so they work on your LAN and over Tailscale
+- Host-network containers (like Plex and Home Assistant) have their listening ports detected automatically, so they get links too
+- **Set web address:** give any container its own URL (for example a path like `/admin`, or a reverse proxy domain) from its ⋯ menu or details panel. Containers with a `homelabstats.url` or `homepage.href` label use that automatically
+
+### Changed
+- The Docker table fits narrower screens: container controls moved into a ⋯ menu next to Open and Logs, and the Image, Net I/O, Uptime and Ports columns hide in turn as the window narrows (they are all still in the details panel)
+
 ## [1.1.0] - 2026-10-28
 
 Everything you need to retire Netdata, Glances, Dozzle, Uptime Kuma and Speedtest Tracker.

@@ -59,8 +59,11 @@ class DockerWatcher:
             with ThreadPoolExecutor(max_workers=8) as ex:
                 stats = dict(zip([c.id for c in running], ex.map(self._stats, running)))
             rows = [self._row(c, stats.get(c.id)) for c in containers]
+            listening = self._listening_ports()
             for r in rows:
                 r["is_self"] = bool(self.self_id and r["full_id"] == self.self_id)
+                if r["network_mode"] == "host" and r["state"] == "running":
+                    r["host_ports"] = listening.get(r["full_id"], [])
             rows.sort(key=lambda r: (r["state"] != "running", r["name"].lower()))
             self._diff(rows)
             try:
@@ -75,6 +78,37 @@ class DockerWatcher:
             data = {"available": False, "error": str(exc), "containers": [], "info": {}, "time": time.time()}
         with self.lock:
             self.data = data
+
+    def _listening_ports(self) -> dict[str, list[int]]:
+        """TCP ports that each container's processes listen on. Used for host-network containers
+        (Plex, Home Assistant...) where Docker itself has no port mappings to show."""
+        cached = getattr(self, "_lp_cache", None)
+        if cached and time.time() - cached[0] < 60:
+            return cached[1]
+        out: dict[str, set[int]] = {}
+        cg_cache: dict[int, str | None] = {}
+        try:
+            import psutil
+            conns = psutil.net_connections("tcp")
+        except Exception:
+            conns = []
+        for c in conns:
+            if c.status != "LISTEN" or not c.pid or not c.laddr:
+                continue
+            if c.laddr.ip.startswith("127.") or c.laddr.ip == "::1":
+                continue
+            if c.pid not in cg_cache:
+                try:
+                    m = re.search(r"([0-9a-f]{64})", Path(f"/proc/{c.pid}/cgroup").read_text())
+                    cg_cache[c.pid] = m.group(1) if m else None
+                except OSError:
+                    cg_cache[c.pid] = None
+            cid = cg_cache[c.pid]
+            if cid:
+                out.setdefault(cid, set()).add(c.laddr.port)
+        result = {k: sorted(v) for k, v in out.items()}
+        self._lp_cache = (time.time(), result)
+        return result
 
     @staticmethod
     def _stats(ct) -> dict | None:
@@ -121,11 +155,22 @@ class DockerWatcher:
         st = a.get("State", {}) or {}
         cfg = a.get("Config", {}) or {}
         labels = cfg.get("Labels") or {}
-        ports = []
+        ports, port_list, seen = [], [], set()
         for cport, binds in ((a.get("NetworkSettings", {}) or {}).get("Ports") or {}).items():
+            cnum, _, proto = cport.partition("/")
             for b in binds or []:
-                ports.append(f"{b.get('HostPort')}:{cport}")
-        ports = sorted(set(ports), key=lambda x: (len(x), x))
+                try:
+                    hp = int(b.get("HostPort") or 0)
+                except ValueError:
+                    continue
+                if not hp or (hp, proto) in seen:
+                    continue
+                seen.add((hp, proto))
+                ports.append(f"{hp}:{cport}")
+                port_list.append({"host": hp, "container": int(cnum) if cnum.isdigit() else None, "proto": proto or "tcp",
+                                  "ip": b.get("HostIp") or ""})
+        ports.sort(key=lambda x: (len(x), x))
+        port_list.sort(key=lambda p: (p["proto"] != "tcp", p["host"]))
         net_mode = (a.get("HostConfig", {}) or {}).get("NetworkMode", "")
         return {
             "id": ct.id[:12],
@@ -141,6 +186,9 @@ class DockerWatcher:
             "restart_count": a.get("RestartCount", 0),
             "restart_policy": ((a.get("HostConfig", {}) or {}).get("RestartPolicy") or {}).get("Name") or "no",
             "ports": ports,
+            "port_list": port_list,
+            "host_ports": [],
+            "url_label": labels.get("homelabstats.url") or labels.get("homepage.href") or None,
             "network_mode": net_mode,
             "project": labels.get("com.docker.compose.project"),
             "stats": stats,

@@ -71,8 +71,8 @@ function chart(id, series, opts = {}) {
   }
   if (t1 <= t0) t1 = t0 + 1;
   const vmin = opts.min ?? 0;
-  let top = opts.max ?? Math.max(1e-9, ...all.map(p => p[1])) * 1.15;
-  if (opts.max == null && top <= vmin) top = vmin + 1;
+  let top = opts.max ?? Math.max(...all.map(p => p[1])) * 1.15;
+  if (opts.max == null && (!(top > vmin) || top - vmin < 1e-6)) top = vmin + 1;
   ctx.font = "11px " + getComputedStyle(document.body).getPropertyValue("--mono");
   const labels = [0, 1, 2, 3, 4].map(i => fmt(top - (top - vmin) * i / 4));
   const padL = Math.ceil(Math.max(...labels.map(l => ctx.measureText(l).width))) + 14, padR = 10, padT = 8, padB = 22;
@@ -173,7 +173,7 @@ function openDrawer(title, stateHtml, bodyHtml) {
 }
 function closeDrawer() { $("#drawer").classList.remove("open"); $("#scrim").classList.remove("open"); state.drawer = null; }
 $("#drClose").onclick = closeDrawer; $("#scrim").onclick = closeDrawer;
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); $("#dlg").classList.remove("open"); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeMenu(); closeDrawer(); $("#dlg").classList.remove("open"); } });
 
 /* ---------- tabs ---------- */
 let tabTimer = null;
@@ -199,3 +199,19 @@ const levelDot = l => `<span class="d lv-${esc(l || "info")}"></span>`;
 function feedHtml(events, empty = "Nothing yet") {
   return events.map(e => `<div class="ev">${levelDot(e.level)}<div class="tt"><b>${esc(e.title)}</b>${e.detail ? `<span title="${esc(e.detail)}">${esc(e.detail)}</span>` : ""}</div><time title="${esc(new Date(e.ts * 1000).toLocaleString())}">${esc(ago(e.ts))}</time></div>`).join("") || `<div class="muted" style="font-size:13px">${empty}</div>`;
 }
+
+/* ---------- popup menu ---------- */
+function popMenu(anchor, items) {
+  closeMenu();
+  const m = document.createElement("div"); m.className = "popmenu"; m.id = "popmenu";
+  m.innerHTML = items.map((it, i) => it.sep ? `<hr>` : `<button data-i="${i}" class="${it.danger ? "danger" : ""}" ${it.disabled ? "disabled" : ""}>${esc(it.label)}</button>`).join("");
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const left = Math.min(r.right - m.offsetWidth, window.innerWidth - m.offsetWidth - 8);
+  const top = r.bottom + 6 + m.offsetHeight > window.innerHeight ? r.top - m.offsetHeight - 6 : r.bottom + 6;
+  m.style.left = Math.max(8, left) + "px"; m.style.top = Math.max(8, top) + "px";
+  m.onclick = e => { const b = e.target.closest("button[data-i]"); if (!b || b.disabled) return; closeMenu(); items[+b.dataset.i].onClick?.(); };
+  setTimeout(() => document.addEventListener("click", closeMenu, { once: true }), 0);
+}
+function closeMenu() { document.getElementById("popmenu")?.remove(); }
+window.addEventListener("scroll", closeMenu, true);
