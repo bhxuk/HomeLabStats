@@ -34,6 +34,10 @@ jobs:
           curl -sf localhost:8090/api/disks > /dev/null
           curl -sf localhost:8090/api/network > /dev/null
           curl -sf "localhost:8090/api/update?check=false" > /dev/null
+          for p in api/sensors "api/metrics/system?range=1h" "api/metrics/containers?range=24h" api/traffic api/speedtest api/monitors api/events api/settings api/docker assets/js/core.js assets/app.css; do
+            curl -sf "localhost:8090/$p" > /dev/null || { echo "::error::$p failed"; exit 1; }
+          done
+          curl -sf -X POST localhost:8090/api/monitors -H 'content-type: application/json' -d '{"name":"ci","type":"dns","target":"localhost"}' > /dev/null
           echo "API OK"
 
       - name: Shell scripts parse

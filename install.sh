@@ -66,10 +66,8 @@ BIND=0.0.0.0
 DATA_DIR=/var/lib/homelabstats
 DASH_USER=admin
 DASH_PASSWORD=$PASS
-ALLOW_CONTAINER_ACTIONS=false
 PING_TARGETS=1.1.1.1,8.8.8.8,google.com
 DNS_NAMES=google.com,cloudflare.com,github.com
-SPEEDTEST_INTERVAL_HOURS=0
 UPDATE_CHECK_HOURS=6
 AUTO_UPDATE=false
 EOF
